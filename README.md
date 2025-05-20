@@ -1,4 +1,4 @@
-## My Project
+## Sample AWS Private CA Connector for Active Directory
 
 This repository contains a PowerShell script (`adc-permissions.ps1`) that delegates the necessary permissions to your Active Directory trust store. This script is only for customers who want to use AWS Private CA Connector for Active Directory (C4AD) with an [AD Connector](https://docs.aws.amazon.com/directoryservice/latest/admin-guide/directory_ad_connector.html) directory. 
 
