@@ -14,7 +14,7 @@ This repository contains a PowerShell script (`adc-permissions.ps1`) that delega
 Run the script in a PowerShell session with administrative privileges:
 
    ```powershell
-   .\adc-permissions.ps1 -AccountName serviceAccountName
+   .\adc-permissions.ps1 -AccountName serviceAccountName -ChildDomainName <optional child domain fully qualified domain name (ex: child.corp.example.com)>
    ```
    
 > **Note:** This script only works on root domains. If executed in a child domain, the script will display a warning and will not proceed. Ensure you are running the script in the root domain of your Active Directory forest.

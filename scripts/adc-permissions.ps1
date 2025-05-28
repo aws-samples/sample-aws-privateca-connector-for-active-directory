@@ -1,13 +1,22 @@
+<#
+.SYNOPSIS
+    Applies required permissions for AWS PrivateCA Connector for Active Directory to the Active Directory Connector service account
+.PARAMETER AccountName
+    Active Directory Connector service account name
+.PARAMETER ChildDomainName
+    The fully qualified domain name of the target child domain (ex: child.corp.example.com)
+#>
+
 param(
-    [string]$AccountName
+    [Parameter(Mandatory=$true, HelpMessage="Enter the AD Connector service account name")]
+    [string]$AccountName,
+    [Parameter(Mandatory=$false, HelpMessage="Enter child domain's fully qualified domain name (ex: child.corp.example.com)")]
+    [string]$ChildDomainName
 )
 
-if (-not $AccountName) {
-    $AccountName = Read-Host "Enter the AD Connector service account name"
-}
+$ErrorActionPreference = "Stop"
 
-# DO NOT modify anything below this comment.
-# Getting Active Directory information.
+# Gets Active Directory information.
 Import-Module -Name 'ActiveDirectory'
 
 $currentDomain= Get-ADDomain
@@ -15,30 +24,38 @@ $currentDomain= Get-ADDomain
 $RootDSE = Get-ADRootDSE
 
 # Check if the current domain is the root domain
-
-if ($currentDomain.DistinguishedName -eq $RootDSE.rootDomainNamingContext) {
-
-Write-Output "This is a root domain that supports PCA connector configuration."
-
-} else {
-
-Write-Warning "This is a child domain. You must set up the PCA connector with the root domain:" $RootDSE.rootDomainNamingContext
-
+if ($currentDomain.DistinguishedName -ne $RootDSE.rootDomainNamingContext) {
+    throw "This is a child domain. Run this script on your root domain."
 }
 
-# Getting AD Connector service account information
-$AccountProperties = Get-ADUser -Identity $AccountName
+# Gets AD Connector service account information
+if (-not $ChildDomainName) {
+    $AccountProperties = Get-ADUser -Identity $AccountName
+} else {
+    $AccountProperties = Get-ADUser -Identity $AccountName -Server $ChildDomainName
+}
+
 $AccountSid = New-Object -TypeName 'System.Security.Principal.SecurityIdentifier' $AccountProperties.SID.Value
 [System.GUID]$ServicePrincipalNameGuid = (Get-ADObject -SearchBase $RootDse.SchemaNamingContext -Filter { lDAPDisplayName -eq 'servicePrincipalName' } -Properties 'schemaIDGUID').schemaIDGUID
 $AccountAclPath = $AccountProperties.DistinguishedName
 
-# Getting ACL settings for AD Connector service account.
-$AccountAcl = Get-ACL -Path "AD:\$AccountAclPath"
-
-# Setting ACL allowing the AD Connector service account the ability to add and remove a Service Principal Name (SPN) to itself
-$AccountAccessRule = New-Object -TypeName 'System.DirectoryServices.ActiveDirectoryAccessRule' $AccountSid, 'WriteProperty', 'Allow', $ServicePrincipalNameGuid, 'None'
-$AccountAcl.AddAccessRule($AccountAccessRule)
-Set-ACL -AclObject $AccountAcl -Path "AD:\$AccountAclPath"
+if (-not $ChildDomainName) {
+    # Gets ACL settings for AD Connector service account.
+    $AccountAcl = Get-ACL -Path "AD:\$AccountAclPath"
+    # Sets ACL allowing the AD Connector service account the ability to add and remove a Service Principal Name (SPN) to itself
+    $AccountAccessRule = New-Object -TypeName 'System.DirectoryServices.ActiveDirectoryAccessRule' $AccountSid, 'WriteProperty', 'Allow', $ServicePrincipalNameGuid, 'None'
+    $AccountAcl.AddAccessRule($AccountAccessRule)
+    Set-ACL -AclObject $AccountAcl -Path "AD:\$AccountAclPath"
+} else {
+    # Sets ACL allowing the AD Connector service account the ability to add and remove a Service Principal Name (SPN) to itself
+    $AdObject = Get-ADObject -Server $ChildDomainName -Filter "objectSid -eq '$AccountSid'" -Properties nTSecurityDescriptor
+    $SecurityDescriptor = $AdObject.nTSecurityDescriptor
+    $SELF = New-Object System.Security.Principal.NTAccount("SELF")
+    $SPNWriteRule = New-Object -TypeName 'System.DirectoryServices.ActiveDirectoryAccessRule' $SELF, 'WriteProperty', 'Allow', $ServicePrincipalNameGuid, 'None'
+    $SecurityDescriptor.AddAccessRule($SPNWriteRule)
+    $Creds = Get-Credential -Message "Please enter credentials for an administrator on $ChildDomainName"
+    Set-ADObject -Server $ChildDomainName -Identity $AdObject.DistinguishedName -Replace @{nTSecurityDescriptor=$SecurityDescriptor} -Credential $Creds
+}
 
 # Add ACLs allowing AD Connector service account the ability to create certification authorities
 [System.GUID]$CertificationAuthorityGuid = (Get-ADObject -SearchBase $RootDse.SchemaNamingContext -Filter { lDAPDisplayName -eq 'certificationAuthority' } -Properties 'schemaIDGUID').schemaIDGUID
@@ -67,4 +84,5 @@ $NullGuid = [System.GUID]'00000000-0000-0000-0000-000000000000'
 $NTAuthAccessRule = New-Object -TypeName 'System.DirectoryServices.ActiveDirectoryAccessRule' $AccountSid, 'ReadProperty,WriteProperty', 'Allow', $NullGuid, 'None'
 $NTAuthCertificatesACL.AddAccessRule($NTAuthAccessRule)
 Set-ACL -AclObject $NTAuthCertificatesACL -Path "AD:\$NTAuthCertificatesDN"
-				
+
+Write-Output "AD service account permissions delegated successfully."
